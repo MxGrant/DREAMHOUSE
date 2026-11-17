@@ -54,11 +54,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       price: piece.price,
     }
     const next = sanitizeItems([...items, item])
-    await execute('UPDATE layouts SET items = $1::jsonb, updated_at = now() WHERE id = $2', [
+    await execute(`UPDATE layouts SET items = $1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $2`, [
       JSON.stringify(next),
       layoutId,
     ])
-    await execute('UPDATE rooms SET active_layout_id = $1, updated_at = now() WHERE id = $2', [layoutId, id])
+    await execute(`UPDATE rooms SET active_layout_id = $1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $2`, [layoutId, id])
     return json({ ok: true, item, count: next.length, layoutId })
   } catch (err) {
     return errorResponse(err)

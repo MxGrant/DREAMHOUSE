@@ -32,7 +32,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     await execute(
       `UPDATE rooms SET name = $1, width_cm = $2, length_cm = $3, wall_color = $4,
-         floor_type = $5, floor_color = $6, theme = $7, sort = $8, updated_at = now()
+         floor_type = $5, floor_color = $6, theme = $7, sort = $8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = $9`,
       [
         str(data.name, room.name).slice(0, 60),
@@ -46,7 +46,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         id,
       ],
     )
-    await execute('UPDATE houses SET updated_at = now() WHERE id = $1', [room.house_id])
+    await execute(`UPDATE houses SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $1`, [room.house_id])
     return json({ ok: true })
   } catch (err) {
     return errorResponse(err)

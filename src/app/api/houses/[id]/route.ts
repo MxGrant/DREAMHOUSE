@@ -28,7 +28,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     await execute(
       `UPDATE houses SET name = $1, description = $2, style = $3, theme = $4, budget = $5,
-       is_public = $6, cover_image = $7, updated_at = now() WHERE id = $8`,
+       is_public = $6, cover_image = $7, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $8`,
       [
         name.slice(0, 90),
         str(data.description, house.description).slice(0, 600),

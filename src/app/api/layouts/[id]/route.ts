@@ -16,7 +16,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     if (!room) return fail('That room does not exist.', 404)
     if (room.owner !== user.id) return fail('This room belongs to someone else.', 403)
 
-    const total = await one<{ c: number }>('SELECT count(*)::int AS c FROM layouts WHERE room_id = $1', [room.id])
+    const total = await one<{ c: number }>('SELECT count(*) AS c FROM layouts WHERE room_id = $1', [room.id])
     if ((total?.c ?? 0) <= 1) return fail('Keep at least one layout in the room.')
 
     await execute('DELETE FROM layouts WHERE id = $1', [id])

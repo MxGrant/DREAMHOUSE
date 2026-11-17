@@ -20,7 +20,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ handle
     } else {
       await execute('INSERT INTO follows (follower_id, following_id) VALUES ($1,$2)', [user.id, target.id])
     }
-    const count = await one<{ c: number }>('SELECT count(*)::int AS c FROM follows WHERE following_id = $1', [
+    const count = await one<{ c: number }>('SELECT count(*) AS c FROM follows WHERE following_id = $1', [
       target.id,
     ])
     return json({ following: !existing, followers: count?.c ?? 0 })

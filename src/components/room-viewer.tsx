@@ -34,7 +34,7 @@ export function RoomViewer({
       {mode === '3d' ? (
         <div
           className="preview-modal-inner"
-          style={{ width: '100%', height: 'min(560px, 64vh)', borderRadius: 24, boxShadow: 'var(--shadow)' }}
+          style={{ width: '100%', aspectRatio: '4 / 3', maxHeight: 'min(560px, 64vh)', borderRadius: 24, boxShadow: 'var(--shadow)' }}
         >
           <Room3D
             room={{

@@ -37,6 +37,18 @@ async function api(path, { method = 'GET', body } = {}) {
   return { status: res.status, json, text }
 }
 
+/**
+ * Both endpoints toggle, so POST until the reported state matches what we want.
+ * That keeps the suite independent of whatever a previous run left behind.
+ */
+async function toggleTo(path, field, desired) {
+  let res = await api(path, { method: 'POST' })
+  for (let attempt = 0; attempt < 2 && res.status === 200 && res.json?.[field] !== desired; attempt += 1) {
+    res = await api(path, { method: 'POST' })
+  }
+  return res
+}
+
 async function main() {
   const login = await api('/api/auth/login', {
     method: 'POST',
@@ -118,12 +130,17 @@ async function main() {
   const publicHouses = await api('/explore')
   const sampleId = publicHouses.text.match(/\/houses\/([0-9a-f-]{36})/)?.[1]
 
-  const like = await api(`/api/houses/${sampleId}/like`, { method: 'POST' })
-  const like2 = await api(`/api/houses/${sampleId}/like`, { method: 'POST' })
-  check('like toggles on and off', like.status === 200 && like.json.liked === true && like2.json.liked === false)
+  const likeOn = await toggleTo(`/api/houses/${sampleId}/like`, 'liked', true)
+  check('like reaches the liked state', likeOn.status === 200 && likeOn.json?.liked === true, JSON.stringify(likeOn.json))
 
-  const save = await api(`/api/houses/${sampleId}/save`, { method: 'POST' })
-  check('save a design', save.status === 200 && save.json.saved === true)
+  const likeOff = await toggleTo(`/api/houses/${sampleId}/like`, 'liked', false)
+  check('like can be removed again', likeOff.status === 200 && likeOff.json?.liked === false, JSON.stringify(likeOff.json))
+
+  const saveOn = await toggleTo(`/api/houses/${sampleId}/save`, 'saved', true)
+  check('save a design', saveOn.status === 200 && saveOn.json?.saved === true, JSON.stringify(saveOn.json))
+
+  const saveOff = await toggleTo(`/api/houses/${sampleId}/save`, 'saved', false)
+  check('unsave a design', saveOff.status === 200 && saveOff.json?.saved === false, JSON.stringify(saveOff.json))
 
   const comment = await api(`/api/houses/${sampleId}/comments`, {
     method: 'POST',

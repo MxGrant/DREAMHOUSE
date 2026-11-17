@@ -25,16 +25,27 @@ export function parseItems(value: unknown): LayoutItem[] {
   return []
 }
 
+type CardRow = Omit<HouseCardData, 'room_types'> & { room_types: unknown }
+
+/** D1 returns GROUP_CONCAT as a comma list; the UI expects a string array. */
+function mapCards(rows: CardRow[]): HouseCardData[] {
+  return rows.map((row) => ({
+    ...row,
+    room_types:
+      typeof row.room_types === 'string' ? row.room_types.split(',').filter(Boolean) : [],
+  }))
+}
+
 const CARD_SELECT = `
 SELECT h.id, h.user_id, h.name, h.description, h.cover_image, h.style, h.theme, h.budget,
        h.is_public, h.created_at, h.updated_at,
        u.name AS author_name, u.handle AS author_handle, u.avatar_hue AS author_hue,
-       (SELECT count(*)::int FROM rooms r WHERE r.house_id = h.id) AS room_count,
-       (SELECT count(*)::int FROM likes l WHERE l.house_id = h.id) AS like_count,
-       (SELECT count(*)::int FROM saves s WHERE s.house_id = h.id) AS save_count,
+       (SELECT count(*) FROM rooms r WHERE r.house_id = h.id) AS room_count,
+       (SELECT count(*) FROM likes l WHERE l.house_id = h.id) AS like_count,
+       (SELECT count(*) FROM saves s WHERE s.house_id = h.id) AS save_count,
        EXISTS(SELECT 1 FROM likes l WHERE l.house_id = h.id AND l.user_id = $1) AS liked,
        EXISTS(SELECT 1 FROM saves s WHERE s.house_id = h.id AND s.user_id = $1) AS saved,
-       COALESCE((SELECT array_agg(DISTINCT r2.type) FROM rooms r2 WHERE r2.house_id = h.id), ARRAY[]::text[]) AS room_types
+       COALESCE((SELECT group_concat(DISTINCT r2.type) FROM rooms r2 WHERE r2.house_id = h.id), '') AS room_types
 FROM houses h
 JOIN users u ON u.id = h.user_id
 `
@@ -71,29 +82,36 @@ export async function listHouses(opts: ListHouseOptions = {}): Promise<HouseCard
     where += ` AND EXISTS (SELECT 1 FROM saves ss WHERE ss.house_id = h.id AND ss.user_id = $${params.length})`
   }
   let order =
-    ' ORDER BY ((SELECT count(*)::int FROM likes l WHERE l.house_id = h.id) * 2 + (SELECT count(*)::int FROM saves s WHERE s.house_id = h.id) * 3) DESC, h.created_at DESC'
+    ' ORDER BY ((SELECT count(*) FROM likes l WHERE l.house_id = h.id) * 2 + (SELECT count(*) FROM saves s WHERE s.house_id = h.id) * 3) DESC, h.created_at DESC'
   if (opts.sort === 'newest') order = ' ORDER BY h.created_at DESC'
   if (opts.sort === 'budget') order = ' ORDER BY h.budget DESC'
-  if (opts.sort === 'rooms') order = ' ORDER BY (SELECT count(*)::int FROM rooms r WHERE r.house_id = h.id) DESC'
+  if (opts.sort === 'rooms') order = ' ORDER BY (SELECT count(*) FROM rooms r WHERE r.house_id = h.id) DESC'
   const limit = opts.limit ? ` LIMIT ${Math.max(1, Math.floor(opts.limit))}` : ' LIMIT 60'
-  return query<HouseCardData>(CARD_SELECT + where + order + limit, params)
+  return mapCards(await query<CardRow>(CARD_SELECT + where + order + limit, params))
 }
 
 export async function getHouseCard(id: string, viewerId?: string | null): Promise<HouseCardData | null> {
-  return one<HouseCardData>(`${CARD_SELECT} WHERE h.id = $2`, [viewerId ?? '', id])
+  const row = await one<CardRow>(`${CARD_SELECT} WHERE h.id = $2`, [viewerId ?? '', id])
+  return row ? mapCards([row])[0] : null
 }
 
 export async function getRoomsOfHouse(houseId: string) {
-  return query<RoomRow & { item_count: number; total: number }>(
-    `SELECT r.*,
-       COALESCE(jsonb_array_length(l.items), 0) AS item_count,
-       COALESCE((SELECT SUM((it->>'price')::int) FROM jsonb_array_elements(l.items) it), 0) AS total
+  const rows = await query<RoomRow & { layout_items: string | null }>(
+    `SELECT r.*, l.items AS layout_items
      FROM rooms r
      LEFT JOIN layouts l ON l.id = r.active_layout_id
      WHERE r.house_id = $1
      ORDER BY r.sort ASC, r.created_at ASC`,
     [houseId],
   )
+  return rows.map(({ layout_items, ...room }) => {
+    const items = parseItems(layout_items)
+    return {
+      ...room,
+      item_count: items.length,
+      total: items.reduce((sum, item) => sum + Number(item.price ?? 0), 0),
+    }
+  })
 }
 
 export async function getRoom(roomId: string): Promise<RoomRow | null> {
@@ -150,11 +168,11 @@ export async function getFurniture(filters?: {
     params.push(`%${filters.color}%`)
     const fuzzy = params.length
     params.push(filters.color)
-    where += ` AND (color_name ILIKE $${fuzzy} OR color = $${params.length})`
+    where += ` AND (color_name LIKE $${fuzzy} OR color = $${params.length})`
   }
   if (filters?.search) {
     params.push(`%${filters.search}%`)
-    where += ` AND (name ILIKE $${params.length} OR material ILIKE $${params.length} OR blurb ILIKE $${params.length})`
+    where += ` AND (name LIKE $${params.length} OR material LIKE $${params.length} OR blurb LIKE $${params.length})`
   }
   let order = ' ORDER BY popularity DESC'
   if (filters?.sort === 'price-asc') order = ' ORDER BY price ASC'
@@ -165,7 +183,8 @@ export async function getFurniture(filters?: {
 
 export async function getFurnitureByIds(ids: string[]): Promise<FurnitureRow[]> {
   if (!ids.length) return []
-  return query<FurnitureRow>('SELECT * FROM furniture WHERE id = ANY($1::text[])', [ids])
+  const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ')
+  return query<FurnitureRow>(`SELECT * FROM furniture WHERE id IN (${placeholders})`, ids)
 }
 
 export async function getProfile(handle: string, viewerId?: string | null) {
@@ -173,9 +192,9 @@ export async function getProfile(handle: string, viewerId?: string | null) {
     UserRow & { follower_count: number; following_count: number; house_count: number; following: boolean }
   >(
     `SELECT u.*,
-       (SELECT count(*)::int FROM follows f WHERE f.following_id = u.id) AS follower_count,
-       (SELECT count(*)::int FROM follows f WHERE f.follower_id = u.id) AS following_count,
-       (SELECT count(*)::int FROM houses h WHERE h.user_id = u.id AND (h.is_public OR h.user_id = $2)) AS house_count,
+       (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS follower_count,
+       (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
+       (SELECT count(*) FROM houses h WHERE h.user_id = u.id AND (h.is_public OR h.user_id = $2)) AS house_count,
        EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = $2 AND f.following_id = u.id) AS following
      FROM users u WHERE u.handle = $1`,
     [handle, viewerId ?? ''],
@@ -185,8 +204,8 @@ export async function getProfile(handle: string, viewerId?: string | null) {
 export async function getDesigners(limit = 4) {
   return query<UserRow & { house_count: number; follower_count: number }>(
     `SELECT u.*,
-       (SELECT count(*)::int FROM houses h WHERE h.user_id = u.id AND h.is_public) AS house_count,
-       (SELECT count(*)::int FROM follows f WHERE f.following_id = u.id) AS follower_count
+       (SELECT count(*) FROM houses h WHERE h.user_id = u.id AND h.is_public) AS house_count,
+       (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS follower_count
      FROM users u WHERE u.is_designer = true ORDER BY follower_count DESC LIMIT $1`,
     [limit],
   )
@@ -195,7 +214,7 @@ export async function getDesigners(limit = 4) {
 export async function getCollectionsFor(userId: string, viewerId?: string | null) {
   return query<CollectionRow & { house_count: number; preview: string | null }>(
     `SELECT c.*,
-       (SELECT count(*)::int FROM collection_houses ch WHERE ch.collection_id = c.id) AS house_count,
+       (SELECT count(*) FROM collection_houses ch WHERE ch.collection_id = c.id) AS house_count,
        (SELECT h.cover_image FROM collection_houses ch JOIN houses h ON h.id = ch.house_id
          WHERE ch.collection_id = c.id LIMIT 1) AS preview
      FROM collections c
@@ -209,7 +228,7 @@ export async function listPublicCollections(limit = 6) {
   return query<CollectionRow & { house_count: number; preview: string | null; author_name: string; author_handle: string }>(
     `SELECT c.*,
        u.name AS author_name, u.handle AS author_handle,
-       (SELECT count(*)::int FROM collection_houses ch WHERE ch.collection_id = c.id) AS house_count,
+       (SELECT count(*) FROM collection_houses ch WHERE ch.collection_id = c.id) AS house_count,
        (SELECT h.cover_image FROM collection_houses ch JOIN houses h ON h.id = ch.house_id
          WHERE ch.collection_id = c.id LIMIT 1) AS preview
      FROM collections c JOIN users u ON u.id = c.user_id
@@ -227,9 +246,11 @@ export async function getCollection(id: string, viewerId?: string | null) {
   )
   if (!collection) return null
   if (!collection.is_public && collection.user_id !== viewerId) return null
-  const houses = await query<HouseCardData>(
-    `${CARD_SELECT} JOIN collection_houses ch ON ch.house_id = h.id WHERE ch.collection_id = $2 AND (h.is_public OR h.user_id = $1) ORDER BY ch.added_at DESC`,
-    [viewerId ?? '', id],
+  const houses = mapCards(
+    await query<CardRow>(
+      `${CARD_SELECT} JOIN collection_houses ch ON ch.house_id = h.id WHERE ch.collection_id = $2 AND (h.is_public OR h.user_id = $1) ORDER BY ch.added_at DESC`,
+      [viewerId ?? '', id],
+    ),
   )
   return { collection, houses }
 }
@@ -237,7 +258,7 @@ export async function getCollection(id: string, viewerId?: string | null) {
 export async function listMoodboards(viewerId?: string | null) {
   return query<MoodboardRow & { author_name: string; author_handle: string; piece_count: number; preview: string | null }>(
     `SELECT m.*, u.name AS author_name, u.handle AS author_handle,
-       (SELECT count(*)::int FROM moodboard_items mi WHERE mi.moodboard_id = m.id) AS piece_count,
+       (SELECT count(*) FROM moodboard_items mi WHERE mi.moodboard_id = m.id) AS piece_count,
        (SELECT COALESCE(mi.image, mi.color) FROM moodboard_items mi WHERE mi.moodboard_id = m.id AND (mi.image IS NOT NULL OR mi.color IS NOT NULL) ORDER BY mi.sort LIMIT 1) AS preview
      FROM moodboards m JOIN users u ON u.id = m.user_id
      WHERE m.is_public = true OR m.user_id = $1
@@ -265,10 +286,10 @@ export async function getMoodboard(id: string, viewerId?: string | null) {
 
 export async function getStats() {
   const [houses, rooms, pieces, designers] = await Promise.all([
-    one<{ c: number }>('SELECT count(*)::int AS c FROM houses WHERE is_public = true'),
-    one<{ c: number }>('SELECT count(*)::int AS c FROM rooms'),
-    one<{ c: number }>('SELECT count(*)::int AS c FROM furniture'),
-    one<{ c: number }>('SELECT count(*)::int AS c FROM users WHERE is_designer = true'),
+    one<{ c: number }>('SELECT count(*) AS c FROM houses WHERE is_public = true'),
+    one<{ c: number }>('SELECT count(*) AS c FROM rooms'),
+    one<{ c: number }>('SELECT count(*) AS c FROM furniture'),
+    one<{ c: number }>('SELECT count(*) AS c FROM users WHERE is_designer = true'),
   ])
   return {
     houses: houses?.c ?? 0,
@@ -279,17 +300,18 @@ export async function getStats() {
 }
 
 export async function getHouseTotals(houseId: string) {
-  const row = await one<{ total: number; per_room: string }>(
-    `SELECT COALESCE(SUM((it->>'price')::int), 0)::int AS total
-     FROM rooms r JOIN layouts l ON l.id = r.active_layout_id
-     CROSS JOIN LATERAL jsonb_array_elements(l.items) it
-     WHERE r.house_id = $1`,
+  const rows = await query<{ items: string | null }>(
+    `SELECT l.items FROM rooms r JOIN layouts l ON l.id = r.active_layout_id WHERE r.house_id = $1`,
     [houseId],
   )
-  return row?.total ?? 0
+  return rows.reduce(
+    (total, row) =>
+      total + parseItems(row.items).reduce((sum, item) => sum + Number(item.price ?? 0), 0),
+    0,
+  )
 }
 
 export async function getSavedCount(userId: string) {
-  const row = await one<{ c: number }>('SELECT count(*)::int AS c FROM saves WHERE user_id = $1', [userId])
+  const row = await one<{ c: number }>('SELECT count(*) AS c FROM saves WHERE user_id = $1', [userId])
   return row?.c ?? 0
 }

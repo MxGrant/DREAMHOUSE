@@ -17,7 +17,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     } else {
       await execute('INSERT INTO likes (user_id, house_id) VALUES ($1,$2)', [user.id, id])
     }
-    const count = await one<{ c: number }>('SELECT count(*)::int AS c FROM likes WHERE house_id = $1', [id])
+    const count = await one<{ c: number }>('SELECT count(*) AS c FROM likes WHERE house_id = $1', [id])
     return json({ liked: !existing, count: count?.c ?? 0 })
   } catch (err) {
     return errorResponse(err)
