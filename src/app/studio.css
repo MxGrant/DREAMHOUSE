@@ -872,6 +872,15 @@
   box-shadow: var(--shadow-lg);
 }
 
+/* A portrait phone frame leaves the room small; give the 3D stage a wider box. */
+@media (max-width: 720px) {
+  .preview-modal-inner {
+    height: auto;
+    aspect-ratio: 4 / 3;
+    max-height: 62vh;
+  }
+}
+
 .preview-close {
   position: absolute;
   right: 14px;

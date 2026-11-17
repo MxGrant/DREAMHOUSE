@@ -26,7 +26,7 @@ function box(w: number, h: number, d: number, color: string, x = 0, y = 0, z = 0
   return mesh
 }
 
-function buildItem(item: LayoutItem): THREE.Group {
+function buildItem(item: LayoutItem, roomW: number, roomL: number): THREE.Group {
   const group = new THREE.Group()
   const w = item.w * M
   const d = item.d * M
@@ -138,7 +138,9 @@ function buildItem(item: LayoutItem): THREE.Group {
     }
   }
 
-  group.position.set(item.x * M, 0, item.y * M)
+  // Plan coordinates are centimetres from the room's top-left corner; the 3D
+  // floor is centred on the origin, so shift by half the room to line up.
+  group.position.set(item.x * M - roomW / 2, 0, item.y * M - roomL / 2)
   group.rotation.y = (-item.rotation * Math.PI) / 180
   group.traverse((child) => {
     if (child instanceof THREE.Mesh) {
@@ -182,7 +184,7 @@ export function Room3D({ room, items, badge }: Room3DProps) {
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.07
-    controls.target.set(0, 0.65, 0)
+    controls.target.set(0, 0.85, 0)
     controls.minDistance = Math.max(1.6, Math.hypot(w, l) * 0.4)
     controls.maxDistance = Math.hypot(w, l) * 3
     controls.maxPolarAngle = Math.PI / 2.05
@@ -204,6 +206,7 @@ export function Room3D({ room, items, badge }: Room3DProps) {
     key.shadow.camera.top = bound
     key.shadow.camera.bottom = -bound
     key.shadow.bias = -0.0012
+    key.shadow.camera.updateProjectionMatrix()
     scene.add(key)
     const fill = new THREE.DirectionalLight(0xffeaf2, 0.85)
     fill.position.set(-w, 2.4, -l)
@@ -212,12 +215,49 @@ export function Room3D({ room, items, badge }: Room3DProps) {
     const content = new THREE.Group()
     scene.add(content)
 
+    // Frame the whole room whatever the container shape: a portrait phone panel
+    // needs a longer camera pull-back than a wide desktop pane.
+    let userMoved = false
+    controls.addEventListener('start', () => {
+      userMoved = true
+    })
+    const fitCamera = () => {
+      const dir = new THREE.Vector3(0.62, 0.78, 0.95).normalize()
+      const corners: THREE.Vector3[] = []
+      for (const x of [-w / 2, w / 2]) {
+        for (const y of [0, 2.55]) {
+          for (const z of [-l / 2, l / 2]) corners.push(new THREE.Vector3(x, y, z))
+        }
+      }
+      // Project the room's corners and grow the distance until it fills the frame.
+      let distance = Math.max(w, l) * 1.4
+      for (let pass = 0; pass < 6; pass += 1) {
+        camera.position.copy(controls.target).addScaledVector(dir, distance)
+        camera.lookAt(controls.target)
+        camera.updateMatrixWorld()
+        let reach = 0
+        for (const corner of corners) {
+          const projected = corner.clone().project(camera)
+          reach = Math.max(reach, Math.abs(projected.x), Math.abs(projected.y))
+        }
+        if (!Number.isFinite(reach) || reach <= 0) break
+        const scale = reach / 0.9
+        distance *= scale
+        if (Math.abs(scale - 1) < 0.02) break
+      }
+      camera.position.copy(controls.target).addScaledVector(dir, distance)
+      controls.minDistance = Math.min(controls.minDistance, distance * 0.45)
+      controls.maxDistance = Math.max(controls.maxDistance, distance * 1.8)
+      controls.update()
+    }
+
     const resize = () => {
       const rect = mount.getBoundingClientRect()
       if (!rect.width || !rect.height) return
       renderer.setSize(rect.width, rect.height, false)
       camera.aspect = rect.width / rect.height
       camera.updateProjectionMatrix()
+      if (!userMoved) fitCamera()
     }
     resize()
     const ro = new ResizeObserver(resize)
@@ -256,9 +296,9 @@ export function Room3D({ room, items, badge }: Room3DProps) {
     const ctx = sceneRef.current
     if (!ctx) return
     const { content, scene } = ctx
-    while (content.children.length) {
-      const child = content.children.pop()
-      child?.traverse((obj) => {
+    for (const child of [...content.children]) {
+      content.remove(child)
+      child.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           obj.geometry.dispose()
           const mat = obj.material as THREE.Material | THREE.Material[]
@@ -324,7 +364,7 @@ export function Room3D({ room, items, badge }: Room3DProps) {
     mullion.position.set(w * 0.12, 1.62, -l / 2 + 0.02)
     content.add(mullion)
 
-    for (const item of items) content.add(buildItem(item))
+    for (const item of items) content.add(buildItem(item, w, l))
     return
   }, [items, room.floor_color, room.wall_color, w, l])
 
