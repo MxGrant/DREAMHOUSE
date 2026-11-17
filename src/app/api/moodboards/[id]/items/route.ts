@@ -24,7 +24,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const kind = str(data.kind)
     if (!KINDS.has(kind)) return fail('Unknown moodboard piece.')
 
-    const count = await one<{ c: number }>('SELECT count(*)::int AS c FROM moodboard_items WHERE moodboard_id = $1', [
+    const count = await one<{ c: number }>('SELECT count(*) AS c FROM moodboard_items WHERE moodboard_id = $1', [
       id,
     ])
     if ((count?.c ?? 0) >= 40) return fail('That board is full — 40 pieces is plenty.')

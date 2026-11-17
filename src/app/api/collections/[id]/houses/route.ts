@@ -26,7 +26,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       )
     }
     const count = await one<{ c: number }>(
-      'SELECT count(*)::int AS c FROM collection_houses WHERE collection_id = $1',
+      'SELECT count(*) AS c FROM collection_houses WHERE collection_id = $1',
       [id],
     )
     return json({ ok: true, count: count?.c ?? 0 })

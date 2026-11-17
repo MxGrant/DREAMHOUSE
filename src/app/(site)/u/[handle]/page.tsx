@@ -22,14 +22,14 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
     listHouses({ authorId: profile.id, viewerId: viewer?.id ?? null, sort: 'newest' }),
     query<CollectionRow & { house_count: number; preview: string | null }>(
       `SELECT c.*,
-         (SELECT count(*)::int FROM collection_houses ch WHERE ch.collection_id = c.id) AS house_count,
+         (SELECT count(*) FROM collection_houses ch WHERE ch.collection_id = c.id) AS house_count,
          (SELECT h.cover_image FROM collection_houses ch JOIN houses h ON h.id = ch.house_id WHERE ch.collection_id = c.id LIMIT 1) AS preview
        FROM collections c WHERE c.user_id = $1 AND (c.is_public OR $2) ORDER BY c.created_at DESC`,
       [profile.id, isSelf],
     ),
     query<MoodboardRow & { piece_count: number; preview: string | null }>(
       `SELECT m.*,
-         (SELECT count(*)::int FROM moodboard_items mi WHERE mi.moodboard_id = m.id) AS piece_count,
+         (SELECT count(*) FROM moodboard_items mi WHERE mi.moodboard_id = m.id) AS piece_count,
          (SELECT COALESCE(mi.image, mi.color) FROM moodboard_items mi WHERE mi.moodboard_id = m.id AND (mi.image IS NOT NULL OR mi.color IS NOT NULL) ORDER BY mi.sort LIMIT 1) AS preview
        FROM moodboards m WHERE m.user_id = $1 AND (m.is_public OR $2) ORDER BY m.created_at DESC`,
       [profile.id, isSelf],

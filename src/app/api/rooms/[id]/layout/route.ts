@@ -37,12 +37,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       ])
     }
 
-    await execute('UPDATE layouts SET items = $1::jsonb, updated_at = now() WHERE id = $2', [
+    await execute(`UPDATE layouts SET items = $1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $2`, [
       JSON.stringify(items),
       layoutId,
     ])
-    await execute('UPDATE rooms SET active_layout_id = $1, updated_at = now() WHERE id = $2', [layoutId, id])
-    await execute('UPDATE houses SET updated_at = now() WHERE id = $1', [room.house_id])
+    await execute(`UPDATE rooms SET active_layout_id = $1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $2`, [layoutId, id])
+    await execute(`UPDATE houses SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $1`, [room.house_id])
     return json({ ok: true, layoutId, count: items.length, savedAt: new Date().toISOString() })
   } catch (err) {
     return errorResponse(err)

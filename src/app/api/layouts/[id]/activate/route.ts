@@ -20,7 +20,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (!room) return fail('That room does not exist.', 404)
     if (room.owner !== user.id) return fail('This room belongs to someone else.', 403)
 
-    await execute('UPDATE rooms SET active_layout_id = $1, updated_at = now() WHERE id = $2', [id, room.id])
+    await execute(`UPDATE rooms SET active_layout_id = $1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $2`, [id, room.id])
     return json({ ok: true, items: parseItems(layout.items), roomId: room.id })
   } catch (err) {
     return errorResponse(err)

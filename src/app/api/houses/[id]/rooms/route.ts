@@ -32,7 +32,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const roomId = crypto.randomUUID()
     const layoutId = crypto.randomUUID()
 
-    const existing = await one<{ c: number }>('SELECT count(*)::int AS c FROM rooms WHERE house_id = $1', [id])
+    const existing = await one<{ c: number }>('SELECT count(*) AS c FROM rooms WHERE house_id = $1', [id])
 
     await execute(
       `INSERT INTO rooms (id, house_id, name, type, width_cm, length_cm, wall_color, floor_type, floor_color, theme, sort, active_layout_id)
@@ -58,7 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       'Signature layout',
       JSON.stringify([]),
     ])
-    await execute('UPDATE houses SET updated_at = now() WHERE id = $1', [id])
+    await execute(`UPDATE houses SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $1`, [id])
     return json({ ok: true, roomId })
   } catch (err) {
     return errorResponse(err)

@@ -1,6 +1,21 @@
-import type { PGlite } from '@electric-sql/pglite'
 import type { LayoutItem } from '@/lib/types'
-import { hashPassword } from '@/lib/auth'
+
+/** Minimal sink so the seed can run against D1 in batches, or a local SQLite file. */
+export type SeedSink = {
+  query(sql: string, params?: unknown[]): Promise<void>
+}
+
+/**
+ * PBKDF2 hashes (100k iterations, SHA-256) of the demo passwords.
+ * Workers' Web Crypto rejects iteration counts above 100,000.
+ */
+const SEED_HASHES: Record<string, string> = {
+  amelia: 'pbkdf2$100000$e1b083e53f15d1ff57820b1c130fad52$54d68bcf014ef879d12ee79ff580c8b4946590e8cda7d1e14b60840924dc7de5',
+  juniper: 'pbkdf2$100000$a2b0d6c99d561eaadda0654032d2b05e$53a52cc17c17f993c86063d3b79bc0fd78ebf2b9607bf0434b5d1fe235d1ffbf',
+  marco: 'pbkdf2$100000$3d31b344481c908e17768ec084621b96$ee673cbaa7f500384ade5c6904b10fce2e8c09d8f6532709473abc086aecc04a',
+  sienna: 'pbkdf2$100000$ce995e8e64506c8e9ce8b2ee59cbe005$ab729a5b26d5f9d4e1273bf5d894db893a2b1f5de6642ccecb74794c0903a6f5',
+  noah: 'pbkdf2$100000$cd2a66921a2af45d72a4fef78eb22bc7$bde481fe3a801fe3d338cc06dd3907f16e654117dfde7ab04d51f35a64a22d89',
+}
 
 type FurnSeed = {
   id: string
@@ -574,7 +589,12 @@ const MOODBOARDS = [
   },
 ]
 
-export async function seedDatabase(db: PGlite): Promise<void> {
+/** Demo account hashes keyed by email, used to migrate earlier deploys. */
+export const SEED_PASSWORD_HASHES: Record<string, string> = Object.fromEntries(
+  USERS.map((user) => [user.email, SEED_HASHES[user.key]]),
+)
+
+export async function seedDatabase(db: SeedSink): Promise<void> {
   const userIds: Record<string, string> = {}
   for (const u of USERS) {
     const id = uid()
@@ -582,7 +602,7 @@ export async function seedDatabase(db: PGlite): Promise<void> {
     await db.query(
       `INSERT INTO users (id, name, email, password_hash, handle, bio, location, avatar_hue, is_designer)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id, u.name, u.email, await hashPassword(u.password), u.handle, u.bio, u.location, u.hue, u.designer],
+      [id, u.name, u.email, SEED_HASHES[u.key], u.handle, u.bio, u.location, u.hue, u.designer],
     )
   }
 
@@ -624,7 +644,7 @@ export async function seedDatabase(db: PGlite): Promise<void> {
       const length = r.length ?? 520
       await db.query(
         `INSERT INTO rooms (id, house_id, name, type, width_cm, length_cm, wall_color, floor_type, floor_color, theme, sort, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),now())`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
         [roomId, id, r.name, r.type, width, length, wall, floorType, floor, theme, sort++],
       )
 
@@ -636,7 +656,7 @@ export async function seedDatabase(db: PGlite): Promise<void> {
       for (const [idx, lay] of layouts.entries()) {
         const layoutId = uid()
         const items = buildRoomLayout(r.type, width, length, h.style, lay.variant)
-        await db.query(`INSERT INTO layouts (id, room_id, name, items, updated_at) VALUES ($1,$2,$3,$4,now())`, [
+        await db.query(`INSERT INTO layouts (id, room_id, name, items, updated_at) VALUES ($1,$2,$3,$4,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, [
           layoutId,
           roomId,
           lay.name,

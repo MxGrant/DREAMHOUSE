@@ -1,32 +1,61 @@
 import { cookies } from 'next/headers'
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto'
-import { promisify } from 'node:util'
 import { execute, one } from '@/db'
 import type { UserRow } from './types'
 
-const scrypt = promisify(scryptCb) as (
-  password: string,
-  salt: string,
-  keylen: number,
-) => Promise<Buffer>
-
 export const SESSION_COOKIE = 'dh_session'
 const SESSION_DAYS = 30
+// Workers rejects PBKDF2 iteration counts above 100,000.
+const ITERATIONS = 100000
+const KEY_BYTES = 32
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function fromHex(hex: string): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return bytes
+}
+
+/** PBKDF2-SHA256 via Web Crypto, which runs unchanged on Workers and in Node. */
+async function derive(password: string, salt: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, [
+    'deriveBits',
+  ])
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: ITERATIONS, hash: 'SHA-256' },
+    key,
+    KEY_BYTES * 8,
+  )
+  return new Uint8Array(bits)
+}
+
+function equal(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i]
+  return diff === 0
+}
 
 export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16).toString('hex')
-  const derived = await scrypt(password, salt, 64)
-  return `scrypt:${salt}:${derived.toString('hex')}`
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const derived = await derive(password, salt)
+  return `pbkdf2$${ITERATIONS}$${toHex(salt)}$${toHex(derived)}`
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const parts = stored.split(':')
-  if (parts.length !== 3) return false
-  const [, salt, hash] = parts
-  const derived = await scrypt(password, salt, 64)
-  const expected = Buffer.from(hash, 'hex')
-  if (expected.length !== derived.length) return false
-  return timingSafeEqual(derived, expected)
+  const [scheme, iterations, salt, hash] = stored.split('$')
+  if (scheme !== 'pbkdf2' || !iterations || !salt || !hash) return false
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, [
+    'deriveBits',
+  ])
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: fromHex(salt), iterations: Number(iterations), hash: 'SHA-256' },
+    key,
+    (hash.length / 2) * 8,
+  )
+  return equal(new Uint8Array(bits), fromHex(hash))
 }
 
 export type PublicUser = Pick<
@@ -47,7 +76,7 @@ export function toPublicUser(row: UserRow): PublicUser {
 }
 
 export async function createSession(userId: string): Promise<string> {
-  const token = randomBytes(32).toString('hex')
+  const token = toHex(crypto.getRandomValues(new Uint8Array(32)))
   const expires = new Date(Date.now() + SESSION_DAYS * 86400000)
   await execute('INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)', [
     token,
@@ -80,7 +109,7 @@ export async function getCurrentUser(): Promise<UserRow | null> {
   if (!token) return null
   const user = await one<UserRow>(
     `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token = $1 AND s.expires_at > now()`,
+     WHERE s.token = $1 AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     [token],
   )
   return user

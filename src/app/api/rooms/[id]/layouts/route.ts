@@ -19,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const data = await body<{ name?: string; items?: unknown; activate?: boolean }>(req)
     const items = sanitizeItems(data.items)
-    const count = await one<{ c: number }>('SELECT count(*)::int AS c FROM layouts WHERE room_id = $1', [id])
+    const count = await one<{ c: number }>('SELECT count(*) AS c FROM layouts WHERE room_id = $1', [id])
     const name = str(data.name) || `Design ${(count?.c ?? 0) + 1}`
 
     const layoutId = crypto.randomUUID()
@@ -30,7 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       JSON.stringify(items),
     ])
     if (data.activate !== false) {
-      await execute('UPDATE rooms SET active_layout_id = $1, updated_at = now() WHERE id = $2', [layoutId, id])
+      await execute(`UPDATE rooms SET active_layout_id = $1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = $2`, [layoutId, id])
     }
     const layouts = await getLayouts(id)
     return json({ ok: true, layoutId, layouts })
